@@ -1,0 +1,28 @@
+mediapipe
+opencv-python
+numpy
+PySide6
+trimesh
+psutil
+pytest
+
+# Windows
+pycaw; sys_platform == "win32"
+screen-brightness-control; sys_platform != "darwin"
+
+# macOS and Linux: mouse, keys and media keys
+pynput; sys_platform != "win32"
+
+# macOS: window list (Quartz), moving windows (Accessibility), app activation (AppKit)
+pyobjc-framework-Quartz; sys_platform == "darwin"
+pyobjc-framework-ApplicationServices; sys_platform == "darwin"
+pyobjc-framework-Cocoa; sys_platform == "darwin"
+
+# Linux (X11 sessions): windows through EWMH
+python-xlib; sys_platform == "linux"
+
+# JARVIS (voice): wake word on this PC, microphone, speech to text (Google), voice (Microsoft edge-tts)
+openwakeword
+sounddevice
+SpeechRecognition
+edge-tts
