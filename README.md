@@ -3,6 +3,8 @@
 Control your computer with your hands through an ordinary webcam, with a JARVIS-style heads-up display and
 a voice assistant. No extra hardware.
 
+![The glass desk: floating panels for the clock, system status, apps, files, music, a note and a 3D model](docs/images/glass-desk.png)
+
 - **Hands:** point with an open hand, pinch to click or press, make a fist to grab windows and glass
   panels, use two hands to resize, drag things off the screen to throw them away.
 - **Glass desk:** floating panels for apps, open windows, files, clock, system status, music, pictures,
@@ -82,6 +84,8 @@ your normal desktop and every program works. The screen starts clean; a clap, `C
 | **drag a panel off any screen edge until its border turns red, then let go** | thrown away (a real program's window goes to the shelf instead of closing) |
 | clap | every panel away / back |
 
+![A note panel dragged off the right edge of the screen, its border red: letting go throws it away](docs/images/throw-away.png)
+
 Panels you make are saved in `space.json`. Exit with `Ctrl+Alt+X` or the power panel; the taskbar and icons
 come back at once (and are restored on the next start if sensor-OS ever crashes).
 
@@ -102,6 +106,8 @@ Say **"Hey Jarvis"** or just **"Jarvis"** (or press `Ctrl+Alt+J`), then speak: "
 music on YouTube", "open my downloads", "volume up", "brightness 40", "note: buy milk tomorrow", "how much
 battery is left?", or ask anything. "Jarvis, open YouTube" in one breath works too. After answering it keeps
 listening for a few seconds, and it remembers the conversation ("and close that one too").
+
+![JARVIS answering "do I have new email?" in its box at the bottom of the screen](docs/images/jarvis.png)
 
 ### Its brain: your own AI subscription
 
@@ -205,7 +211,11 @@ sensor_os/jarvis/          the voice assistant: assistant (conversation), voice 
                            brain (the AIs), actions (what it may do), agent + approve_server (services)
 sensor_os/i18n.py          on-screen translations   sensor_os/jarvis/speech_text.py  JARVIS's phrases
 tests/                     tests with simulated hands: .venv\Scripts\python -m pytest
+tools/screenshots.py       renders the pictures in docs/images/ (made-up data, nothing from your PC)
 ```
+
+The pictures in this README are drawn by sensor-OS's own painting code with sample data
+(`tools/screenshots.py`); in real use your desktop and programs are visible around the panels.
 
 ## Platforms
 
