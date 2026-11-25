@@ -158,11 +158,19 @@ def _last_line(r) -> str:
 class CodexBrain(ClaudeCodeBrain):
     """ChatGPT through OpenAI's Codex CLI and your ChatGPT plan (`codex login` once). Codex is a coding
     agent, so it runs in a read-only sandbox in an empty folder with no saved session: it can answer,
-    and sensor-OS carries out the actions. Reasoning is turned off for speed (~7-8 s measured)."""
-    name = "ChatGPT (your ChatGPT plan, via Codex)"
+    and sensor-OS carries out the actions.
 
-    def __init__(self, path: str = "", model: str = "", timeout: float = 60.0, effort: str = "none"):
+    Model: OpenAI's fast small model with little reasoning unless `jarvis_model` names another. Measured on
+    the same questions (first words): gpt-6-luna/low ~1.0-1.3 s, gpt-5.6-terra/none ~1.3-1.7 s, the Codex
+    default gpt-6.2-sol/low ~2.0-2.5 s. Model names change; one that is gone or refuses the effort setting
+    falls back to Codex's own default, so JARVIS keeps working."""
+    name = "ChatGPT (your ChatGPT plan, via Codex)"
+    FAST_MODEL, FAST_EFFORT = "gpt-6-luna", "low"
+
+    def __init__(self, path: str = "", model: str = "", timeout: float = 60.0, effort: str = ""):
         self.cmd = find_npm_tool(path, "codex", "@openai/codex/bin/codex.js")
+        model = model or self.FAST_MODEL
+        effort = effort or (self.FAST_EFFORT if model == self.FAST_MODEL else "")
         self.path, self.model, self.timeout, self.effort = (self.cmd or [None])[-1], model, timeout, effort
         self.workdir = tempfile.mkdtemp(prefix="jarvis_codex_")
         self.last_seconds = None
@@ -301,9 +309,16 @@ class CodexLiveBrain(CodexBrain):
         threading.Thread(target=read, daemon=True, name="jarvis-codex").start()
         self._reply(self._send("initialize", {"clientInfo": {"name": "sensor_os_jarvis", "version": "1"}}))
         self._send("initialized", notify=True)
-        r = self._reply(self._send("thread/start", {
-            "baseInstructions": self.system_prompt(), "ephemeral": True, "sandbox": "read-only",
-            "approvalPolicy": "never", "cwd": self.workdir, "model": self.model or None}))
+        start = {"baseInstructions": self.system_prompt(), "ephemeral": True, "sandbox": "read-only",
+                 "approvalPolicy": "never", "cwd": self.workdir, "model": self.model or None}
+        try:
+            r = self._reply(self._send("thread/start", start))
+        except RuntimeError as exc:
+            if not self.model:
+                raise
+            print(f"JARVIS: ChatGPT model {self.model} unavailable ({exc}); using Codex's default", flush=True)
+            self.model, self.effort, start["model"] = "", "", None
+            r = self._reply(self._send("thread/start", start))
         self.tid = r["thread"]["id"]
         self.turns = 0
 
@@ -341,8 +356,21 @@ class CodexLiveBrain(CodexBrain):
                 return super().think(prompt)
             try:
                 text = self._turn(prompt, on_say)
-            except (OSError, RuntimeError):
-                self.close()                         # start afresh next time
+            except RuntimeError as exc:
+                if not (self.effort and "nsupported value" in str(exc)):
+                    self.close()                     # start afresh next time
+                    raise
+                # This model refuses the reasoning setting (Codex changed its default model once and
+                # "none" stopped working): let the model choose, and ask again.
+                print(f"JARVIS: ChatGPT refused effort {self.effort!r}; using the model's default", flush=True)
+                self.effort = ""
+                try:
+                    text = self._turn(prompt, on_say)
+                except (OSError, RuntimeError):
+                    self.close()
+                    raise
+            except OSError:
+                self.close()
                 raise
             self.turns += 1
             self.last_seconds = time.perf_counter() - t
