@@ -9,6 +9,7 @@ add a block below, set `jarvis_language` and a matching `jarvis_voice` (any Micr
 PHRASES = {
     "en": {
         "ack": "Yes?",
+        "on_it": "Right away.",
         "morning": "Good morning.", "afternoon": "Good afternoon.", "evening": "Good evening.", "night": "Working late, I see.",
         "ready": "{hello} All systems are online.{extra}",
         "battery_low": " Battery is at {pct} percent.",
@@ -50,6 +51,7 @@ PHRASES = {
     },
     "th": {
         "ack": "ครับ",
+        "on_it": "ได้เลยครับ",
         "morning": "อรุณสวัสดิ์ครับ", "afternoon": "สวัสดีตอนบ่ายครับ", "evening": "สวัสดีตอนเย็นครับ", "night": "ดึกแล้วนะครับ",
         "ready": "{hello} ระบบทั้งหมดพร้อมทำงานแล้วครับ{extra}",
         "battery_low": " แบตเตอรี่เหลือ {pct} เปอร์เซ็นต์",
@@ -105,12 +107,26 @@ AI_NOTES = {
 LANGUAGE_NAMES = {"en": "English", "th": "Thai", "de": "German", "ja": "Japanese", "zh": "Chinese", "es": "Spanish",
                   "fr": "French", "ko": "Korean", "vi": "Vietnamese", "id": "Indonesian", "pt": "Portuguese"}
 
-_lang = "en"
+# A natural male neural voice per language, used when `jarvis_voice` is not for that language.
+DEFAULT_VOICES = {"en": "en-GB-RyanNeural", "th": "th-TH-NiwatNeural", "de": "de-DE-ConradNeural",
+                  "ja": "ja-JP-KeitaNeural", "zh": "zh-CN-YunxiNeural", "es": "es-ES-AlvaroNeural",
+                  "fr": "fr-FR-HenriNeural", "ko": "ko-KR-InJoonNeural", "vi": "vi-VN-NamMinhNeural",
+                  "id": "id-ID-ArdiNeural", "pt": "pt-BR-AntonioNeural"}
+
+_lang = "en"              # the language JARVIS is speaking right now (the one you last spoke)
+_languages = ["en"]       # every language JARVIS listens for; the first is the main one
 
 
 def code(language: str) -> str:
     """"th-TH" -> "th"."""
     return (language or "en").split("-")[0].lower()
+
+
+def configure(languages) -> None:
+    """The languages JARVIS listens for ("en-US", "th-TH", ...), main one first."""
+    global _languages
+    _languages = [code(x) for x in languages] or ["en"]
+    set_language(_languages[0])
 
 
 def set_language(language: str) -> None:
@@ -122,9 +138,21 @@ def language() -> str:
     return _lang
 
 
+def languages() -> list:
+    return list(_languages)
+
+
 def language_name(lang: str | None = None) -> str:
-    c = lang or _lang
+    c = code(lang) if lang else _lang
     return LANGUAGE_NAMES.get(c, c)
+
+
+def voice_for(lang: str, configured: str = "") -> str:
+    """The voice for a language: `jarvis_voice` if it is one of that language's voices, else a default."""
+    c = code(lang)
+    if configured and code(configured) == c:
+        return configured
+    return DEFAULT_VOICES.get(c, configured or DEFAULT_VOICES["en"])
 
 
 def T(key: str, **kw) -> str:
@@ -134,4 +162,7 @@ def T(key: str, **kw) -> str:
 
 
 def ai_notes(lang: str | None = None) -> str:
-    return AI_NOTES.get(lang or _lang, "")
+    """Notes for one language, or (no argument) for every language JARVIS listens for."""
+    if lang:
+        return AI_NOTES.get(code(lang), "")
+    return "\n".join(AI_NOTES[c] for c in _languages if c in AI_NOTES)

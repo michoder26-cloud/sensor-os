@@ -111,6 +111,11 @@ class Config:
     jarvis_voice: str = "en-GB-RyanNeural"    # any Microsoft neural voice (`edge-tts --list-voices`),
                                               # e.g. th-TH-NiwatNeural for Thai, de-DE-ConradNeural for German
     jarvis_language: str = "en-US"      # what you speak (speech recognition + JARVIS's replies), e.g. th-TH
+    jarvis_languages: tuple = ()        # several, main first, e.g. ["en-US", "th-TH"]: JARVIS hears whichever
+                                        # you speak (recognized side by side, no slower) and answers in it
+    jarvis_pause: float = 0.6           # seconds of quiet that end what you say (shorter = answers sooner,
+                                        # too short cuts you off mid-sentence)
+    jarvis_quick: bool = True           # do plain commands ("open Chrome", "volume up") at once, without the AI
     jarvis_wake_threshold: float = 0.3  # how sure the wake-word model must be (higher = fewer false wakes);
                                         # a Thai-accented "Hey Jarvis" scored 0.38-0.45 in tests, so 0.5 missed it
     jarvis_name_check: bool = True      # also wake on the name alone ("Jarvis"): a short phrase said on its

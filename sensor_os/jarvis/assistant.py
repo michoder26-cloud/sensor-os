@@ -13,7 +13,8 @@ from collections import deque
 
 from .actions import Runner, parse
 from .brain import make_brain
-from .speech_text import T, set_language
+from .actions import FOLDERS, SITES, Action
+from .speech_text import T, configure, language_name, set_language, voice_for
 
 CONFIRM_WORDS = ("confirm", "yes", "do it", "go ahead", "ok", "ยืนยัน", "ตกลง", "ใช่", "เอาเลย")
 STATES = ("off", "idle", "listening", "thinking", "speaking", "error")
@@ -106,15 +107,51 @@ def build_prompt(text: str, ctx: str, history) -> str:
         parts.append("[Earlier in this conversation]")
         for heard, said in history:
             parts += [f"User: {heard}", f"JARVIS: {said}"]
-    parts += ["[The user said]", text]
+    parts += [f"[The user said, in {language_name()}: reply in {language_name()}]", text]
     return "\n".join(parts)
+
+
+VOLUME_WORDS = {"up": ("volume up", "louder", "turn it up", "turn up the volume", "เพิ่มเสียง", "เสียงดังขึ้น",
+                       "ดังขึ้น", "เร่งเสียง"),
+                "down": ("volume down", "quieter", "turn it down", "turn down the volume", "ลดเสียง", "เบาเสียง",
+                         "เสียงเบาลง", "เบาลง"),
+                "mute": ("mute", "mute the sound", "ปิดเสียง")}
+OPEN_EN = re.compile(r"^(?:please\s+)?(?:open|launch|start|run)\s+(?:the\s+|my\s+)?(.+?)(?:\s+(?:app|please))?$")
+OPEN_TH = re.compile(r"^(?:ช่วย|ขอ)?เปิด\s*(.+?)\s*(?:ให้หน่อย|ให้ที|หน่อย|ที|ให้|ครับ|ค่ะ|คะ)*$")
+
+
+def quick_action(text: str, app_names=()) -> list | None:
+    """Plain commands done at once, without the AI (~2 s saved): "open Chrome", "เปิด YouTube",
+    "open downloads", "volume up", "ปิดเสียง". Anything less plain returns None and goes to the AI."""
+    t = re.sub(r"[.!?,]+$", "", text.strip().lower()).strip()
+    for level, words in VOLUME_WORDS.items():
+        if t in words:
+            return [Action("volume", level)]
+    m = OPEN_EN.match(t) or OPEN_TH.match(t)
+    if not m:
+        return None
+    target = m.group(1).strip()
+    if len(target) >= 3:                       # an installed app first: "open Spotify" means the app, not the site
+        for name in app_names:
+            low = name.lower()
+            if low == target or target in low.split() or low.startswith(target + " "):
+                return [Action("open_app", name)]
+    key = target.replace("www.", "").replace(".com", "").replace(" ", "")
+    if key in SITES:
+        return [Action("open_website", key)]
+    if target in FOLDERS:
+        return [Action("open_folder", target)]
+    return None
 
 
 class Jarvis(threading.Thread):
     def __init__(self, cfg, shared, system, desk, ui=None, chime=None, folders=None, scene=None):
         super().__init__(daemon=True, name="jarvis")
         self.cfg, self.shared, self.system, self.desk = cfg, shared, system, desk
-        set_language(getattr(cfg, "jarvis_language", "en-US"))   # what JARVIS says by itself, and the AI's language
+        # The languages JARVIS hears, main first; it answers in whichever you spoke.
+        self.languages = list(getattr(cfg, "jarvis_languages", ()) or ()) or [getattr(cfg, "jarvis_language", "en-US")]
+        configure(self.languages)
+        self._apps = None                      # app names, for "open X" done without the AI
         self.scene = scene or (lambda: "")    # what panels / 3D models are on the screen now
         self.ui = ui or (lambda *a: None)
         self.chime = chime or (lambda name: None)
@@ -196,13 +233,14 @@ class Jarvis(threading.Thread):
         from .voice import Ears, Voice
         ok, why = self.brain.available()
         try:
-            self.ears = Ears(self.cfg.jarvis_wake_threshold, self.cfg.jarvis_language,
-                             getattr(self.cfg, "jarvis_name_check", True))
+            self.ears = Ears(self.cfg.jarvis_wake_threshold, self.languages,
+                             getattr(self.cfg, "jarvis_name_check", True), getattr(self.cfg, "jarvis_pause", 0.6))
         except Exception as exc:              # no microphone, blocked by privacy settings, missing package
             self.show(state="error", error=T("mic_unavailable", err=exc.__class__.__name__))
             print(f"JARVIS: microphone unavailable: {exc}", flush=True)
             return
-        self.voice = Voice(self.cfg.jarvis_voice, self.ears)
+        self.voice = Voice(lambda lang: voice_for(lang, self.cfg.jarvis_voice), self.ears)
+        self.voice.lang = self.languages[0]
         if not ok:
             self.show(state="error", error=why)
             print("JARVIS:", why, flush=True)
@@ -218,6 +256,7 @@ class Jarvis(threading.Thread):
         if ok and hasattr(self.brain, "warm"):     # the AI starts now, not at the first question
             threading.Thread(target=self.brain.warm, daemon=True, name="jarvis-warm").start()
         self.ack = self.voice.ready(T("ack"))        # also opens the voice's connection (the first is slow)
+        threading.Thread(target=self._prepare, daemon=True, name="jarvis-prepare").start()
         if getattr(self.cfg, "jarvis_greeting", False) and ok:
             self.speak(greeting(self.system.state if self.system else {}))
             self.show(state="idle")
@@ -236,6 +275,38 @@ class Jarvis(threading.Thread):
             self.ears.close()
             if hasattr(self.brain, "close"):
                 self.brain.close()
+
+    def _prepare(self) -> None:
+        """Ready-made replies in every language (played at once), and the app list for quick commands."""
+        for lang in self.languages:
+            for key in ("ack", "on_it"):
+                self._phrase(key, lang)
+        set_language(self.voice.lang)
+        try:
+            self._apps = [label for label, _path in self.desk.app_list()]
+        except Exception:
+            self._apps = []
+
+    def _phrase(self, key: str, lang: str | None = None):
+        """The recording of a ready-made phrase in a language (made once)."""
+        if self.voice is None:
+            return None
+        lang = lang or self.voice.lang
+        before = self.voice.lang
+        set_language(lang)
+        self.voice.lang = lang
+        try:
+            return self.voice.ready(T(key))
+        finally:
+            self.voice.lang = before
+
+    def use_language(self, lang: str | None) -> None:
+        """You spoke this language: JARVIS answers in it, in its voice."""
+        if not lang:
+            return
+        set_language(lang)
+        if self.voice is not None:
+            self.voice.lang = lang
 
     def _meter(self) -> None:
         """How loud the microphone is, for the orb, while JARVIS listens."""
@@ -270,8 +341,10 @@ class Jarvis(threading.Thread):
             if not text:
                 self.speak(T("missed"))
                 return
+            self.use_language(getattr(self.ears, "last_language", None))
             self.show(heard=text)
-            print(f"JARVIS heard: {text}", flush=True)
+            print(f"JARVIS heard: {text}" + (f"  [{getattr(self.ears, 'last_language', '')}]"
+                                              if len(getattr(self, "languages", [])) > 1 else ""), flush=True)
             if self.pending is not None:
                 actions, self.pending = self.pending, None
                 if is_confirm(text):
@@ -290,9 +363,32 @@ class Jarvis(threading.Thread):
                 print(f"JARVIS: {panels} (done here, no AI)", flush=True)
                 self.ui(panels)
                 self.speak(T("panels_shown") if panels == "show_panels" else T("panels_hidden"))
-            else:
+            elif not self.quick(text):
                 self.respond(text)
             wait = self.cfg.jarvis_followup
+
+    def quick(self, text: str) -> bool:
+        """A plain command done at once, with a ready-made reply, without the AI. False = ask the AI."""
+        if not getattr(self.cfg, "jarvis_quick", True):
+            return False
+        actions = quick_action(text, getattr(self, "_apps", None) or ())
+        if not actions:
+            return False
+        t = time.perf_counter()
+        failed = [r for r in (self.runner.run(a) for a in actions) if r]
+        if failed:
+            return False                       # not that simple after all: let the AI deal with it
+        print(f"JARVIS: {T('on_it')}  actions={[(a.type, a.target) for a in actions]}  (quick, no AI, "
+              f"{time.perf_counter() - t:.2f} s)", flush=True)
+        self.history.append((text, T("on_it")))
+        self.show(state="speaking", reply=T("on_it"))
+        path = self._phrase("on_it")
+        if path and self.voice is not None:
+            with self.talk_lock:
+                self.voice.play_file(path)
+        else:
+            self.speak(T("on_it"))
+        return True
 
     def respond(self, text: str) -> None:
         self.show(state="thinking")
@@ -335,8 +431,9 @@ class Jarvis(threading.Thread):
 
         worker = threading.Thread(target=think, daemon=True, name="jarvis-think")
         worker.start()
-        if self.voice is not None and self.ack is not None and not early.wait(0.5):
-            self.voice.play_file(self.ack)     # "Yes?" when the answer is not there in half a second
+        ack = self._phrase("ack") if self.voice is not None else None
+        if ack is not None and not early.wait(0.5):
+            self.voice.play_file(ack)          # "Yes?" when the answer is not there in half a second
             self.show(state="thinking")
         early.wait()
         talking = None

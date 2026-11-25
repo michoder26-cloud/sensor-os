@@ -481,15 +481,53 @@ def test_english_is_the_default_and_other_languages_fall_back_to_it():
     from sensor_os.jarvis.brain import ClaudeCodeBrain
     cfg = Config()
     assert cfg.jarvis_language.startswith("en") and cfg.jarvis_voice.startswith("en-")
-    speech_text.set_language(cfg.jarvis_language)
+    speech_text.configure([cfg.jarvis_language])
     noon = time.mktime((2026, 11, 21, 13, 0, 0, 0, 0, -1))
     assert greeting({}, noon) == "Good afternoon. All systems are online."
     prompt = ClaudeCodeBrain().system_prompt()
-    assert "The user speaks English" in prompt and "ครับ" not in prompt
-    speech_text.set_language("de-DE")                 # no German phrases yet: English, but the AI answers in German
-    assert speech_text.T("done") == "Done." and "The user speaks German" in ClaudeCodeBrain().system_prompt()
+    assert "main language is English." in prompt and "ครับ" not in prompt
+    speech_text.configure(["de-DE"])                  # no German phrases yet: English, but the AI answers in German
+    assert speech_text.T("done") == "Done." and "main language is German" in ClaudeCodeBrain().system_prompt()
+    speech_text.configure(["en-US", "th-TH"])         # English first, Thai too: the Thai notes are in, English leads
+    prompt = ClaudeCodeBrain().system_prompt()
+    assert "main language is English; they also speak Thai" in prompt and "ครับ" in prompt
+    assert speech_text.T("done") == "Done."
+    speech_text.set_language("th-TH")                 # you spoke Thai: JARVIS's own words are Thai
+    assert speech_text.T("done") == "เรียบร้อยครับ"
+    assert speech_text.voice_for("th-TH", "en-GB-RyanNeural") == "th-TH-NiwatNeural"
+    assert speech_text.voice_for("en-US", "en-US-GuyNeural") == "en-US-GuyNeural"
+
+
+def test_the_language_you_spoke_is_picked_by_confidence_and_script():
+    from sensor_os.jarvis.voice import pick_transcript
+    # measured with real speech: both recognizers answer, the right one is surer and in its own script
+    assert pick_transcript([("en-US", "do I have new email", 0.987), ("th-TH", "Do you have New e-mail", 0.924)]) \
+        == ("do I have new email", "en-US")
+    assert pick_transcript([("en-US", "my email my my", 0.61), ("th-TH", "มีอีเมลใหม่ไหม", 0.947)]) \
+        == ("มีอีเมลใหม่ไหม", "th-TH")
+    assert pick_transcript([("en-US", "", 0.0), ("th-TH", "เปิด Chrome ให้หน่อย", 0.947)])[1] == "th-TH"
+    assert pick_transcript([("en-US", "", 0.0)]) == ("", None)
+
+
+def test_the_prompt_says_which_language_to_answer_in():
+    speech_text.configure(["en-US", "th-TH"])
     speech_text.set_language("th-TH")
-    assert "ครับ" in ClaudeCodeBrain().system_prompt() and speech_text.T("done") == "เรียบร้อยครับ"
+    assert "[The user said, in Thai: reply in Thai]" in build_prompt("เปิดเพลง", "ctx", [])
+
+
+def test_plain_commands_are_done_without_the_ai():
+    from sensor_os.jarvis.assistant import quick_action
+    apps = ["Google Chrome", "Spotify", "Visual Studio Code", "Notepad"]
+    assert quick_action("Open Chrome", apps)[0].target == "Google Chrome"
+    assert quick_action("เปิด Spotify ให้หน่อย", apps)[0].target == "Spotify"
+    assert quick_action("open YouTube.", apps)[0].type == "open_website"
+    assert quick_action("เปิดยูทูบ", apps) is None                     # a Thai spelling: the AI knows it
+    assert quick_action("open downloads", apps)[0].type == "open_folder"
+    assert quick_action("เปิดดาวน์โหลด", apps)[0].type == "open_folder"
+    assert quick_action("volume up", apps)[0].target == "up" and quick_action("ปิดเสียง", apps)[0].target == "mute"
+    assert quick_action("open the door for me", apps) is None           # not an app: the AI decides
+    assert quick_action("open YouTube and play relaxing music", apps) is None
+    assert quick_action("what time is it", apps) is None
 
 
 def test_confirm_takes_whole_english_words():

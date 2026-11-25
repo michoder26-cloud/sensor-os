@@ -46,6 +46,34 @@ def after_name(text: str) -> str | None:
     return None
 
 
+SCRIPTS = {"th": ("฀", "๿"), "ja": ("぀", "ヿ"), "zh": ("一", "鿿"), "ko": ("가", "힯"),
+           "ru": ("Ѐ", "ӿ"), "ar": ("؀", "ۿ"), "hi": ("ऀ", "ॿ"), "el": ("Ͱ", "Ͽ"),
+           "he": ("֐", "׿")}
+
+
+def pick_transcript(results) -> tuple:
+    """[(language, transcript, confidence)] from recognizers run side by side -> (text, language).
+    The recognizer for the language you spoke is the most sure, and a recognizer for a language with its own
+    script that hears another language writes it in Latin letters ("Do you have New e-mail" from the Thai one):
+    measured, English vs Thai was right every time this way."""
+    best, best_score = ("", None), -9.0
+    for lang, text, conf in results:
+        if not text:
+            continue
+        c = lang.split("-")[0].lower()
+        letters = [ch for ch in text if ch.isalpha()]
+        if c in SCRIPTS:
+            lo, hi = SCRIPTS[c]
+            own = sum(lo <= ch <= hi for ch in letters) / max(1, len(letters))
+            score = conf + (0.1 if own > 0.3 else -0.3)
+        else:                                           # a Latin-script language
+            other = sum(ord(ch) > 0x24f for ch in letters) / max(1, len(letters))
+            score = conf - (0.3 if other > 0.3 else 0.0)
+        if score > best_score:
+            best, best_score = (text, lang), score
+    return best
+
+
 def rms(chunk: np.ndarray) -> float:
     return float(np.sqrt(np.mean(chunk.astype(np.float32) ** 2))) if len(chunk) else 0.0
 
@@ -87,13 +115,16 @@ class Ears:
     """Microphone + wake word. listen_for_wake() blocks until "Hey Jarvis" (or wake() is called);
     hear() records one request and returns its text."""
 
-    def __init__(self, threshold: float = 0.5, language: str = "th-TH", name_check: bool = True):
+    def __init__(self, threshold: float = 0.5, language="en-US", name_check: bool = True, pause: float = 0.6):
+        """language: one ("en-US") or several (["en-US", "th-TH"]: JARVIS hears whichever you speak)."""
         import sounddevice as sd
         from openwakeword.model import Model
         from openwakeword.utils import download_models
         download_models(model_names=["hey_jarvis"])
         self.model = Model(wakeword_models=["hey_jarvis"], inference_framework="onnx")
-        self.threshold, self.language, self.name_check = threshold, language, name_check
+        self.languages = [language] if isinstance(language, str) else list(language)
+        self.language = self.last_language = self.languages[0]
+        self.threshold, self.name_check, self.pause = threshold, name_check, pause
         self.first_request = None
         self.q: queue.Queue = queue.Queue(maxsize=200)
         self.muted = threading.Event()             # set while JARVIS speaks
@@ -191,7 +222,7 @@ class Ears:
 
     def hear(self, stop: threading.Event, wait: float = 5.0) -> str | None:
         """Record one request and turn it into text. None if nobody spoke; "" if it could not be understood."""
-        seg = Segmenter(self.noise, wait=wait)
+        seg = Segmenter(self.noise, pause=getattr(self, "pause", 0.6), wait=wait)
         while not stop.is_set():
             try:
                 chunk = self.q.get(timeout=0.5)
@@ -205,14 +236,32 @@ class Ears:
         return None
 
     def to_text(self, pcm: bytes) -> str:
+        """What was said, in whichever of your languages it was said (that one is kept in last_language).
+        With several languages the recognizers run side by side, so it takes no longer than one (~0.6 s)."""
         import speech_recognition as sr
         audio = sr.AudioData(pcm, RATE, 2)
+        langs = getattr(self, "languages", None) or [self.language]
+
+        def one(lang):
+            try:
+                out = sr.Recognizer().recognize_google(audio, language=lang, show_all=True)
+            except sr.UnknownValueError:
+                return lang, "", 0.0
+            alt = (out.get("alternative") or [{}])[0] if isinstance(out, dict) else {}
+            return lang, alt.get("transcript", ""), float(alt.get("confidence", 0.5) or 0.5)
+
         try:
-            return sr.Recognizer().recognize_google(audio, language=self.language)
-        except sr.UnknownValueError:
-            return ""
+            if len(langs) == 1:
+                results = [one(langs[0])]
+            else:
+                from concurrent.futures import ThreadPoolExecutor
+                with ThreadPoolExecutor(len(langs)) as pool:
+                    results = list(pool.map(one, langs))
         except sr.RequestError as exc:
             raise RuntimeError(T("no_speech_service")) from exc
+        text, lang = pick_transcript(results)
+        self.last_language = lang or langs[0]
+        return text
 
     def close(self) -> None:
         try:
@@ -223,12 +272,19 @@ class Ears:
 
 
 class Voice:
-    """Speaks Thai with Microsoft's neural voice; play() blocks until the sentence is finished."""
+    """Speaks with Microsoft's neural voices, in the language you last spoke; play() blocks until the
+    sentence is finished. `voice` is a voice name, or a function language -> voice name."""
 
-    def __init__(self, voice: str = "th-TH-NiwatNeural", ears: Ears | None = None):
-        self.voice, self.ears = voice, ears
+    def __init__(self, voice="en-GB-RyanNeural", ears: Ears | None = None):
+        self.pick = voice if callable(voice) else (lambda lang: voice)
+        self.ears = ears
+        self.lang = "en"
         self.folder = tempfile.mkdtemp(prefix="jarvis_voice_")
         self.n = 0
+
+    @property
+    def voice(self) -> str:
+        return self.pick(self.lang)
 
     def make(self, text: str, path: str) -> str:
         import edge_tts
@@ -240,8 +296,8 @@ class Voice:
         return path
 
     def ready(self, text: str) -> str | None:
-        """A short phrase made once and kept (the "Yes?" said the moment you stop talking)."""
-        path = os.path.join(self.folder, f"ready{abs(hash(text)) % 10**8}.mp3")
+        """A short phrase made once and kept, so it plays at once ("Yes?", "Right away.")."""
+        path = os.path.join(self.folder, f"ready{abs(hash((self.voice, text))) % 10**8}.mp3")
         if not os.path.exists(path):
             try:
                 self.make(text, path)

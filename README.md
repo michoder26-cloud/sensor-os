@@ -144,16 +144,26 @@ speaks the result.
 
 ### Languages
 
-English by default. Set what you speak and JARVIS's voice in `settings.json`:
+English by default. JARVIS can listen for several languages at once and answers in the one you just
+spoke, in a voice for that language:
 
 ```json
-{"jarvis_language": "th-TH", "jarvis_voice": "th-TH-NiwatNeural", "language": "th"}
+{"jarvis_languages": ["en-US", "th-TH"]}
 ```
 
-`jarvis_language` is used for speech recognition and the AI's replies; `jarvis_voice` is any Microsoft
-neural voice (`edge-tts --list-voices`); `language` is the on-screen text. Thai is fully translated; any
-other language works for speech and replies, with JARVIS's few built-in phrases in English until someone
-translates them (see [Contributing](CONTRIBUTING.md)).
+The first is the main one. Each request is recognized in all of them side by side (no slower than one),
+and the surest result wins. One voice per language is built in (`en-GB-RyanNeural`, `th-TH-NiwatNeural`,
+...); `jarvis_voice` picks another for its language (`edge-tts --list-voices`). `"language": "th"` switches
+the on-screen text. Thai is fully translated; any other language works for speech and replies, with
+JARVIS's few built-in phrases in English until someone translates them (see [Contributing](CONTRIBUTING.md)).
+
+### Speed
+
+- Plain commands are done at once with a ready-made reply, without asking the AI: "open Chrome",
+  "open YouTube", "open downloads", "volume up", "mute" (and the Thai versions). Anything else goes to the AI.
+- The AI is kept running between questions and JARVIS starts speaking as soon as the reply's words arrive.
+- JARVIS stops listening 0.6 s after you stop talking (`jarvis_pause`); shorter answers sooner but may cut
+  you off mid-sentence.
 
 ### Privacy: what leaves your PC
 

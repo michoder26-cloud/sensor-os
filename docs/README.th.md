@@ -8,9 +8,11 @@
 >
 > **ใช้ภาษาไทย:** ใส่ใน `settings.json`
 > ```json
-> {"language": "th", "jarvis_language": "th-TH", "jarvis_voice": "th-TH-NiwatNeural"}
+> {"language": "th", "jarvis_languages": ["en-US", "th-TH"]}
 > ```
-> `language` = ข้อความบนจอ, `jarvis_language` = ภาษาที่พูดกับ JARVIS, `jarvis_voice` = เสียงของ JARVIS (เสียงผู้หญิง: `th-TH-PremwadeeNeural`)
+> `language` = ข้อความบนจอ, `jarvis_languages` = ภาษาที่ JARVIS ฟัง (ตัวแรกเป็นภาษาหลัก) พูดภาษาไหน JARVIS ก็ตอบภาษานั้นด้วยเสียงของภาษานั้น อยากให้ไทยเป็นหลักก็ใส่ `"th-TH"` ไว้ก่อน เปลี่ยนเสียงได้ด้วย `jarvis_voice` (เสียงผู้หญิง: `th-TH-PremwadeeNeural`)
+>
+> คำสั่งง่ายๆ เช่น "เปิด Chrome", "เพิ่มเสียง", "ปิดเสียง" ทำทันทีโดยไม่ต้องรอ AI
 
 ## ติดตั้ง (ครั้งเดียว)
 
