@@ -60,7 +60,11 @@ def decide(folder: str, tool: str, args: dict) -> dict:
 TOOL = {"name": "approve", "description": "Asks the user (by voice, through JARVIS) whether a tool may be used.",
         "inputSchema": {"type": "object", "properties": {"tool_name": {"type": "string"}, "input": {"type": "object"},
                                                          "tool_use_id": {"type": "string"}},
-                        "required": ["tool_name", "input"]}}
+                        "required": ["tool_name", "input"]},
+        # MCP tool hints: it only asks a question (no change anywhere), each call asks afresh, and it reaches
+        # nothing outside this PC (the question goes to JARVIS through a file in the shared folder).
+        "annotations": {"title": "Ask the user", "readOnlyHint": True, "destructiveHint": False,
+                        "idempotentHint": False, "openWorldHint": False}}
 
 
 def main() -> None:

@@ -334,6 +334,24 @@ def test_a_task_loads_only_the_service_it_needs():
     assert pick_services("ทำอะไรสักอย่าง") == ["Gmail", "Google Drive"]
 
 
+def test_the_approve_tool_declares_all_four_hints():
+    import json
+    import subprocess
+    import sys
+    from pathlib import Path
+    from sensor_os.jarvis import approve_server
+    hints = approve_server.TOOL["annotations"]
+    for key in ("readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"):
+        assert isinstance(hints[key], bool), key
+    # and a real MCP client sees them in tools/list
+    lines = [json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}}),
+             json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})]
+    out = subprocess.run([sys.executable, "-I", str(Path(approve_server.__file__)), "."], input="\n".join(lines) + "\n",
+                         capture_output=True, text=True, encoding="utf-8", timeout=20).stdout.splitlines()
+    tools = json.loads(out[1])["result"]["tools"]
+    assert tools[0]["annotations"]["readOnlyHint"] is True and tools[0]["annotations"]["destructiveHint"] is False
+
+
 def test_only_look_ups_go_through_without_asking():
     from sensor_os.jarvis.approve_server import is_read_only
     assert is_read_only("mcp__claude_ai_Gmail__search_threads") and is_read_only("mcp__claude_ai_Notion__notion-search")
